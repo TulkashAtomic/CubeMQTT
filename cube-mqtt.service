@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Cube MQTT Bridge
+After=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/projects/cubemqtt
+ExecStart=/home/pi/projects/cubemqtt/.venv/bin/python /home/pi/projects/cubemqtt/cube_mqtt.py
+Restart=always
+RestartSec=5
+# Ensure venv PATH
+Environment=PATH=/home/pi/projects/cubemqtt/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
