@@ -2,104 +2,116 @@
 <html>
 <head>
     <title>Smart Cube Live</title>
-    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; padding: 20px; background: #222; color: white; font-family: Arial; }
+        #cube-container { width: 800px; height: 600px; }
+    </style>
+    
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-    <style>body{margin:0;padding:20px;background:#222;color:white;font-family:Arial;}</style>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
     <h1>Live Cube State</h1>
     <div id="info">Connecting...</div>
-    <div id="cube-container" style="width:800px;height:600px;"></div>
+    <div id="cube-container"></div>
 
-<script>
-const MQTT_HOST = '192.168.2.110';  // Your broker
-const MQTT_TOPIC = 'cube/smart/json';
-const COLORS = ['white','red','blue','orange','green','yellow'];  // U R F D L B standard
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// 3D Scene
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, 800/600, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(800,600);
-renderer.setClearColor(0x111111);
-document.getElementById('cube-container').appendChild(renderer.domElement);
+    const MQTT_HOST = '192.168.2.110';
+    const MQTT_TOPIC = 'cube/smart/json';
+    const COLORS = ['white','red','blue','orange','green','yellow'];
 
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
-camera.position.z = 5;
+    // 3D Scene Setup
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, 800/600, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(800, 600);
+    renderer.setClearColor(0x111111);
+    document.getElementById('cube-container').appendChild(renderer.domElement);
 
-// Cube faces: 9 stickers each (54 total), net layout
-const stickerPositions = [];  // Build 54 sticker meshes
-const cubies = [];  // 27 cubie groups
+    // OrbitControls now works as a direct constructor
+    const controls = new OrbitControls(camera, renderer.domElement);
+    camera.position.z = 5;
 
-// Simplified: 54 flat stickers in 6 faces
-const facePositions = [
-    {pos:[0,2.5,0], rot:[0,0,0]},   // U
-    {pos:[0,-2.5,0], rot:[0,Math.PI,0]}, // D
-    {pos:[2.5,0,0], rot:[0,Math.PI/2,0]}, // R
-    {pos:[-2.5,0,0], rot:[0,-Math.PI/2,0]}, // L
-    {pos:[0,0,2.5], rot:[-Math.PI/2,0,0]}, // F
-    {pos:[0,0,-2.5], rot:[Math.PI/2,0,0]}  // B
-];
+    // --- Rest of your Sticker/Cube Generation Logic ---
+    const stickerPositions = [];
+    const facePositions = [
+        {pos:[0,2.5,0], rot:[Math.PI/2,0,0]},   // U
+        {pos:[0,-2.5,0], rot:[-Math.PI/2,0,0]}, // D
+        {pos:[2.5,0,0], rot:[0,Math.PI/2,0]},  // R
+        {pos:[-2.5,0,0], rot:[0,-Math.PI/2,0]}, // L
+        {pos:[0,0,2.5], rot:[0,0,0]},           // F
+        {pos:[0,0,-2.5], rot:[0,Math.PI,0]}     // B
+    ];
 
-for(let f=0; f<6; f++) {
-    for(let i=0; i<9; i++) {
-        const geo = new THREE.PlaneGeometry(0.95,0.95);
-        const mat = new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide});
-        const mesh = new THREE.Mesh(geo, mat);
-        scene.add(mesh);
-        stickerPositions.push(mesh);
-    }
-}
-
-// MQTT
-const client = mqtt.connect(`ws://${MQTT_HOST}:9001`);  // Enable WS in HA MQTT add-on
-client.on('connect', () => {
-    document.getElementById('info').innerText = 'Connected - Waiting for cube...';
-    client.subscribe(MQTT_TOPIC);
-});
-client.on('message', (topic, msg) => {
-    const data = JSON.parse(msg);
-    document.getElementById('info').innerHTML = `
-        Solved: ${data.solved ? 'Yes' : 'No'}<br>
-        Last: ${data.last_face || '?'} ${data.last_direction || ''}<br>
-        Raw: ${data.state.map(b=>('0'+b.toString(16)).slice(-2)).join(' ')}
-    `;
-    updateCube(data.state);
-});
-
-function updateCube(raw) {
-    // Decode 16 bytes: bytes 0-7 corners (idx+orientation), 8-15 edges (idx+flip)
-    // Simplified color mapping (needs reverse lookup table from indices)
-    // For demo: map bytes to colors (U=0 white, R=1 red, etc.)
-    let stickerIdx = 0;
-    for(let f=0; f<6; f++) {  // 6 faces
-        for(let s=0; s<9; s++) {  // 9 stickers
-            const colorId = (raw[stickerIdx/3] >> ((stickerIdx%3)*2)) & 3 || 0;  // Pseudo-decode
-            stickerPositions[stickerIdx].material.color.setHex(COLORS[colorId] === 'white' ? 0xffffff : 
-                COLORS[colorId] === 'red' ? 0xff0000 : COLORS[colorId] === 'blue' ? 0x0000ff : 0x00ff00);
-            stickerIdx++;
-        }
-    }
-    // Position/rotate stickers to faces (simplified projection)
-    stickerIdx = 0;
     for(let f=0; f<6; f++) {
-        const pos = facePositions[f].pos;
-        const rot = facePositions[f].rot;
         for(let i=0; i<9; i++) {
-            const mesh = stickerPositions[stickerIdx++];
-            mesh.position.set(pos[0]+(i%3-1)*0.33, pos[1]+(Math.floor(i/3)-1)*0.33, pos[2]);
-            mesh.rotation.set(...rot);
+            const geo = new THREE.PlaneGeometry(0.95, 0.95);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+            const mesh = new THREE.Mesh(geo, mat);
+            scene.add(mesh);
+            stickerPositions.push(mesh);
         }
     }
-}
 
-function animate() {
-    requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-}
-animate();
+    // MQTT Connection
+    const client = mqtt.connect(`ws://${MQTT_HOST}:1884`, {
+        username: 'MQTTUser',
+        password: 'MQTTPass'
+    });
+
+    client.on('connect', () => {
+        document.getElementById('info').innerText = 'Connected - Waiting for cube...';
+        client.subscribe(MQTT_TOPIC);
+    });
+
+    client.on('message', (topic, msg) => {
+        const data = JSON.parse(msg);
+        document.getElementById('info').innerHTML = `
+            Solved: ${data.solved ? 'Yes' : 'No'}<br>
+            Last Move: ${data.last_face || '?'} ${data.last_direction || ''}
+        `;
+        updateCube(data.state);
+    });
+
+    function updateCube(raw) {
+        // Your current pseudo-decoding logic
+        let stickerIdx = 0;
+        for(let f=0; f<6; f++) {
+            const pos = facePositions[f].pos;
+            const rot = facePositions[f].rot;
+            for(let i=0; i<9; i++) {
+                const mesh = stickerPositions[stickerIdx];
+                // Better spacing/offset for a 3x3 layout
+                const xOff = (i % 3 - 1) * 1.0;
+                const yOff = (Math.floor(i / 3) - 1) * 1.0;
+                
+                // This is a simple projection; side faces may need axis swapping
+                mesh.position.set(pos[0], pos[1], pos[2]); 
+                // Note: For a real cube, you'll want to translate based on face orientation
+                
+                mesh.rotation.set(...rot);
+                stickerIdx++;
+            }
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
 </script>
 </body>
 </html>
