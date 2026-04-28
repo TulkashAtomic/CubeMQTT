@@ -248,7 +248,7 @@ class MqttBridge:
             "identifiers": ["smart_cube"],
             "name": "Smart Rubik's Cube",
             "model": "BLE Smart Cube",
-            "manufacturer": "Unknown",
+            "manufacturer": "Mi",
             "via_device": MQTT_CLIENT_ID,
         }
 
@@ -266,19 +266,39 @@ class MqttBridge:
         topic = f"{HA_DISCOVERY_PREFIX}/binary_sensor/smart_cube_solved/config"
         self.publish(topic, json.dumps(solved_config), retain=True)
 
-        # Encrypted binary sensor
-        encrypted_config = {
-            "name": "Cube Encrypted",
-            "unique_id": "smart_cube_encrypted",
-            "state_topic": f"{MQTT_BASE}/encrypted",
+      # State sensor (decoded hex for cube layout)
+        state_config = {
+            "name": "Cube State",
+            "unique_id": "smart_cube_state",
+            "state_topic": f"{MQTT_BASE}/state",
             "device": device_info,
-            "device_class": "lock",
-            "payload_on": "1",
-            "payload_off": "0",
-            "icon": "mdi:lock"
+            "device_class": "enum",
+            "icon": "mdi:cube"
         }
-        topic = f"{HA_DISCOVERY_PREFIX}/binary_sensor/smart_cube_encrypted/config"
-        self.publish(topic, json.dumps(encrypted_config), retain=True)
+        topic = f"{HA_DISCOVERY_PREFIX}/sensor/smart_cube_state/config"
+        self.publish(topic, json.dumps(state_config), retain=True)
+
+        # Last Face sensor
+        face_config = {
+            "name": "Last Face",
+            "unique_id": "smart_cube_last_face",
+            "state_topic": f"{MQTT_BASE}/last_face",
+            "device": device_info,
+            "icon": "mdi:arrow-collapse-right"
+        }
+        topic = f"{HA_DISCOVERY_PREFIX}/sensor/smart_cube_last_face/config"
+        self.publish(topic, json.dumps(face_config), retain=True)
+
+        # Last Direction sensor
+        direction_config = {
+            "name": "Last Direction",
+            "unique_id": "smart_cube_last_direction",
+            "state_topic": f"{MQTT_BASE}/last_direction",
+            "device": device_info,
+            "icon": "mdi:rotate-right"
+        }
+        topic = f"{HA_DISCOVERY_PREFIX}/sensor/smart_cube_last_direction/config"
+        self.publish(topic, json.dumps(direction_config), retain=True)
 
         log.info("HA MQTT discovery published")
         self.discovery_published = True
