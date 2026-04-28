@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,9 @@ MQTT_CLIENT_ID = "cube-pi4"
 MQTT_HOST_DEFAULT = "192.168.2.110"
 MQTT_PORT_DEFAULT = 1883
 
+# Home Assistant MQTT Discovery prefix
+HA_DISCOVERY_PREFIX = "homeassistant"
+
 # If your broker requires login, put those values in .env.
 # Example:
 # MQTT_HOST=192.168.2.110
@@ -51,7 +55,6 @@ FACE_NAMES = ["Front", "Bottom", "Right", "Top", "Left", "Back"]
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 log = logging.getLogger("cube")
 
-
 # -----------------------------------------------------------------------------
 # Data structures
 # -----------------------------------------------------------------------------
@@ -63,7 +66,6 @@ class Config:
     mqtt_user: str = ""
     mqtt_pass: str = ""
 
-
 @dataclass
 class CubeState:
     raw: bytes
@@ -72,7 +74,6 @@ class CubeState:
     solved: bool
     last_face: Optional[str]
     last_direction: Optional[str]
-
 
 # -----------------------------------------------------------------------------
 # Helper functions
@@ -118,7 +119,6 @@ def load_env_file(path: str = ".env") -> Config:
 
     return cfg
 
-
 def get_nibble(data: bytes, i: int) -> int:
     """Return nibble i from the byte array.
 
@@ -128,7 +128,6 @@ def get_nibble(data: bytes, i: int) -> int:
     """
     b = data[i // 2]
     return b & 0x0F if i % 2 else (b >> 4) & 0x0F
-
 
 def decode_packet(data: bytes) -> CubeState:
     """Decode a raw cube notification packet.
@@ -165,7 +164,7 @@ def decode_packet(data: bytes) -> CubeState:
 
     if 1 <= face_idx <= 6:
         last_face = FACE_NAMES[face_idx - 1]
-    last_direction = "Clockwise" if direction_idx == 1 else "Anti-clockwise"
+        last_direction = "Clockwise" if direction_idx == 1 else "Anti-clockwise"
 
     return CubeState(
         raw=data,
@@ -175,32 +174,6 @@ def decode_packet(data: bytes) -> CubeState:
         last_face=last_face,
         last_direction=last_direction,
     )
-
-
-async def discover_target(timeout: float = 10.0):
-    """Scan for the cube by stable service-data UUID instead of MAC address.
-
-    Many BLE devices use changing private addresses, so a MAC-based lookup can
-    fail even when the device is present. This scan looks for the FE95 service
-    data key reported by the cube advertisement.
-    """
-    devices = await BleakScanner.discover(timeout=timeout)
-
-    for d in devices:
-        # Bleak exposes advertisement service data via the advertisement object
-        # in newer APIs, but discover() returns device objects with names and addresses.
-        # We therefore do a second pass using the scanner backend's raw advertisement
-        # details if available. The simplest robust approach is to accept any device
-        # whose address appears in the scan and whose service data matches FE95.
-        adv = getattr(d, "advertisement_data", None)
-        if adv is not None and adv.service_data:
-            if TARGET_SERVICE_DATA_UUID in adv.service_data:
-                return d
-
-    # Fallback: if the backend doesn't attach advertisement_data to the device,
-    # use the scanner callback path below on the next scan cycle.
-    return None
-
 
 async def discover_target_with_callback(timeout: float = 10.0):
     """Alternate scan method that inspects advertisement data in real time.
@@ -226,13 +199,12 @@ async def discover_target_with_callback(timeout: float = 10.0):
     finally:
         await scanner.stop()
 
-
 # -----------------------------------------------------------------------------
-# MQTT bridge
+# MQTT bridge with Home Assistant Discovery
 # -----------------------------------------------------------------------------
 
 class MqttBridge:
-    """Minimal MQTT publisher with async connect and reconnect-friendly behaviour."""
+    """Minimal MQTT publisher with async connect, reconnect, and HA discovery."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -242,17 +214,16 @@ class MqttBridge:
             client_id=MQTT_CLIENT_ID,
             protocol=mqtt.MQTTv311,
         )
-
         # If a username is provided, enable authenticated login.
         if cfg.mqtt_user:
             self.client.username_pw_set(cfg.mqtt_user, cfg.mqtt_pass)
 
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
-
         # connect_async() avoids blocking startup if the broker is slow.
         self.client.connect_async(cfg.mqtt_host, cfg.mqtt_port, keepalive=60)
         self.client.loop_start()
+        self.discovery_published = False
 
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         self.connected = True
@@ -268,6 +239,50 @@ class MqttBridge:
         if self.connected:
             self.client.publish(topic, payload, retain=retain)
 
+    def publish_discovery(self):
+        """Publish Home Assistant MQTT discovery configs (retained)."""
+        if self.discovery_published:
+            return
+
+        device_info = {
+            "identifiers": ["smart_cube"],
+            "name": "Smart Rubik's Cube",
+            "model": "BLE Smart Cube",
+            "manufacturer": "Unknown",
+            "via_device": MQTT_CLIENT_ID,
+        }
+
+        # Solved binary sensor
+        solved_config = {
+            "name": "Cube Solved",
+            "unique_id": "smart_cube_solved",
+            "state_topic": f"{MQTT_BASE}/solved",
+            "device": device_info,
+            "device_class": "problem",
+            "payload_on": "1",
+            "payload_off": "0",
+            "icon": "mdi:dice-6"
+        }
+        topic = f"{HA_DISCOVERY_PREFIX}/binary_sensor/smart_cube_solved/config"
+        self.publish(topic, json.dumps(solved_config), retain=True)
+
+        # Encrypted binary sensor
+        encrypted_config = {
+            "name": "Cube Encrypted",
+            "unique_id": "smart_cube_encrypted",
+            "state_topic": f"{MQTT_BASE}/encrypted",
+            "device": device_info,
+            "device_class": "lock",
+            "payload_on": "1",
+            "payload_off": "0",
+            "icon": "mdi:lock"
+        }
+        topic = f"{HA_DISCOVERY_PREFIX}/binary_sensor/smart_cube_encrypted/config"
+        self.publish(topic, json.dumps(encrypted_config), retain=True)
+
+        log.info("HA MQTT discovery published")
+        self.discovery_published = True
+
     def publish_state(self, state: CubeState):
         self.publish(f"{MQTT_BASE}/solved", "1" if state.solved else "0", retain=True)
         self.publish(f"{MQTT_BASE}/encrypted", "1" if state.encrypted else "0", retain=True)
@@ -281,7 +296,6 @@ class MqttBridge:
     def publish_event(self, topic: str, payload: str):
         self.publish(f"{MQTT_BASE}/{topic}", payload, retain=False)
 
-
 # -----------------------------------------------------------------------------
 # Main program
 # -----------------------------------------------------------------------------
@@ -290,6 +304,13 @@ async def main():
     cfg = load_env_file()
     bridge = MqttBridge(cfg)
     reconnect_delay = 2.0
+
+    # Publish discovery shortly after connect
+    while not bridge.connected:
+        await asyncio.sleep(0.5)
+
+    await asyncio.sleep(2)  # Let connection settle
+    bridge.publish_discovery()
 
     while True:
         # Discover the cube by scanning for the FE95 service data key.
@@ -350,7 +371,6 @@ async def main():
             bridge.publish_event("connection_error", str(e))
             await asyncio.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, 30.0)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
