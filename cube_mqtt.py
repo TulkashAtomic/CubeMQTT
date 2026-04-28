@@ -305,7 +305,7 @@ class MqttBridge:
 
     def publish_state(self, state: CubeState):
         self.publish(f"{MQTT_BASE}/solved", "1" if state.solved else "0", retain=True)
-        self.publish(f"{MQTT_BASE}/encrypted", "1" if state.encrypted else "0", retain=True)
+        self.publish(f"{MQTT_BASE}/state", state.decoded.hex(), retain=True)
         self.publish(f"{MQTT_BASE}/raw", state.raw.hex(" "), retain=True)
         self.publish(f"{MQTT_BASE}/decoded", state.decoded.hex(" "), retain=True)
         if state.last_face:
