@@ -308,6 +308,12 @@ class MqttBridge:
         self.publish(f"{MQTT_BASE}/state", state.decoded.hex(), retain=True)
         self.publish(f"{MQTT_BASE}/raw", state.raw.hex(" "), retain=True)
         self.publish(f"{MQTT_BASE}/decoded", state.decoded.hex(" "), retain=True)
+        state_json = {
+            "solved": state.solved,
+            "state": list(state.decoded[:16]),  # Raw bytes as list for JS
+            "last_face": state.last_face,
+            "last_direction": state.last_direction
+}       self.publish(f"{MQTT_BASE}/json", json.dumps(state_json), retain=True)
         if state.last_face:
             self.publish(f"{MQTT_BASE}/last_face", state.last_face, retain=True)
         if state.last_direction:
